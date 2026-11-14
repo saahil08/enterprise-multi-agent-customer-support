@@ -1,0 +1,303 @@
+{
+  "name": "WF_Knowledge_Ingestion",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        224
+      ],
+      "id": "e362beed-f644-4d75-ae0f-839cbf2e186a",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://support-knowledge-dev-sqyjh2u.svc.aped-4627-b74a.pinecone.io/namespaces/support-policies/documents/upsert",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpHeaderAuth",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/json"
+            },
+            {
+              "name": "X-Pinecone-Api-Version",
+              "value": "2026-07"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { documents: $json.documents } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        1792,
+        80
+      ],
+      "id": "80c3b74d-af33-4619-9c78-105423c804d1",
+      "name": "Pinecone - Upsert Knowledge Documents",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "dFs35q1cXPrlq4Ia",
+          "name": "Pinecone API - Support Dev"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "bucketName": "support-agent-knowledge-dev-saahil",
+        "returnAll": true,
+        "options": {
+          "folderKey": "=policies/returns"
+        }
+      },
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 2,
+      "position": [
+        480,
+        160
+      ],
+      "id": "ebdbcba1-58ca-4a95-b6ad-9cde7cb072bc",
+      "name": "Get many files",
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// The S3 bucket is configured separately in the AWS S3 node.\n// folderKey must be a prefix within the bucket.\nconst policyFolders = ['returns', 'refunds', 'shipping', 'warranty'];\nreturn policyFolders.map(folder => ({\n  json: { folderName: folder, folderKey: `policies/${folder}/` }\n}));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        224
+      ],
+      "id": "f6747250-035d-4cfc-97b2-165276fc182e",
+      "name": "Generate Policy Folder Prefixes"
+    },
+    {
+      "parameters": {
+        "bucketName": "support-agent-knowledge-dev-saahil",
+        "fileKey": "={{ $json.Key }}"
+      },
+      "type": "n8n-nodes-base.awsS3",
+      "typeVersion": 2,
+      "position": [
+        672,
+        80
+      ],
+      "id": "3903a14e-61b2-4367-a08e-f844abfe3cff",
+      "name": "Download a file",
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "pdf",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.extractFromFile",
+      "typeVersion": 1.2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "34600491-ad85-42eb-8fac-4de6453f0870",
+      "name": "Extract from File"
+    },
+    {
+      "parameters": {
+        "mode": "combine",
+        "combineBy": "combineByPosition",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.merge",
+      "typeVersion": 3.2,
+      "position": [
+        1120,
+        80
+      ],
+      "id": "dd9de390-8951-4172-9d22-eba8a0dcd80c",
+      "name": "Merge"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\nconst CHUNK_SIZE = 1200;       // characters; tune with retrieval evaluation\nconst CHUNK_OVERLAP = 200;     // characters; tune with retrieval evaluation\nconst output = [];\n\nfor (const item of items) {\n  const data = item.json ?? {};\n  const fullText = String(data.text || '')\n    .replace(/\\r\\n/g, '\\n')\n    .replace(/\\r/g, '\\n')\n    .replace(/[ \\t]+/g, ' ')\n    .replace(/\\n{3,}/g, '\\n\\n')\n    .trim();\n\n  if (!fullText) continue;\n\n  const s3Key = data.Key || data.key || '';\n  const fileName = data.fileName || data.FileName || s3Key.split('/').pop() || 'unknown-document.pdf';\n  const title = data.info?.Title || fileName.replace(/\\.pdf$/i, '').replace(/_/g, ' ');\n  const categoryMatch = s3Key.match(/policies\\/([^/]+)\\//i);\n  const category = categoryMatch ? categoryMatch[1].toLowerCase() : 'general';\n  const policyMatch = fullText.match(/Policy ID\\s*:?\\s*([A-Z0-9-]+)/i);\n  const documentId = policyMatch ? policyMatch[1].toUpperCase() : fileName.replace(/\\.pdf$/i, '').replace(/[^a-zA-Z0-9-]/g, '_');\n  const versionMatch = fullText.match(/Version\\s*[: ]\\s*([0-9.]+)/i);\n  const effectiveDateMatch = fullText.match(/Effective date\\s*[: ]\\s*(\\d{4}-\\d{2}-\\d{2})/i);\n\n  const chunks = [];\n  let start = 0;\n  while (start < fullText.length) {\n    let end = Math.min(start + CHUNK_SIZE, fullText.length);\n    if (end < fullText.length) {\n      const minEnd = start + Math.floor(CHUNK_SIZE * 0.6);\n      const window = fullText.slice(minEnd, end);\n      const boundaries = [\n        window.lastIndexOf('\\n\\n'),\n        window.lastIndexOf('\\n'),\n        window.lastIndexOf('. '),\n        window.lastIndexOf('? '),\n        window.lastIndexOf('! '),\n        window.lastIndexOf(' ')\n      ];\n      const boundary = Math.max(...boundaries);\n      if (boundary >= 0) end = minEnd + boundary + 1;\n    }\n\n    const chunkText = fullText.slice(start, end).trim();\n    if (chunkText) chunks.push(chunkText);\n    if (end >= fullText.length) break;\n\n    let nextStart = Math.max(end - CHUNK_OVERLAP, start + 1);\n    while (nextStart < end && !/\\s/.test(fullText[nextStart])) nextStart++;\n    start = nextStart;\n  }\n\n  chunks.forEach((chunkText, index) => output.push({\n    json: {\n      _id: `${documentId}-CHUNK-${String(index + 1).padStart(4, '0')}`,\n      document_id: documentId,\n      chunk_index: index + 1,\n      total_chunks: chunks.length,\n      chunk_text: chunkText,\n      title,\n      category,\n      source: s3Key,\n      s3_key: s3Key,\n      file_name: fileName,\n      version: versionMatch ? versionMatch[1] : 'unknown',\n      effective_date: effectiveDateMatch ? effectiveDateMatch[1] : 'unknown',\n      document_type: 'customer_support_knowledge',\n      chunking_method: 'recursive_character_boundary',\n      chunk_size_chars: CHUNK_SIZE,\n      chunk_overlap_chars: CHUNK_OVERLAP,\n      status: 'active'\n    }\n  }));\n}\nreturn output;\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1344,
+        80
+      ],
+      "id": "af5d1120-6747-4a33-8fa2-7b0470247b98",
+      "name": "Prepare Documents and Generate Chunks"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nconst documents = items.map(({ json }) => ({\n  _id: json._id,\n  chunk_text: json.chunk_text,\n  title: json.title,\n  category: json.category,\n  document_id: json.document_id,\n  chunk_index: json.chunk_index,\n  total_chunks: json.total_chunks,\n  source: json.source,\n  s3_key: json.s3_key,\n  file_name: json.file_name,\n  version: json.version,\n  effective_date: json.effective_date,\n  document_type: json.document_type,\n  status: json.status,\n  chunking_method: json.chunking_method,\n  chunk_size_chars: json.chunk_size_chars,\n  chunk_overlap_chars: json.chunk_overlap_chars\n}));\n\n// Prevent accidental duplicate IDs in the batch\nconst uniqueDocuments = [\n  ...new Map(documents.map(doc => [doc._id, doc])).values()\n];\n\nreturn [\n  {\n    json: {\n      documents: uniqueDocuments,\n      document_count: uniqueDocuments.length\n    }\n  }\n];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1568,
+        80
+      ],
+      "id": "b9f7b6d4-1bbf-4a24-a7a3-8330e24a1cd1",
+      "name": "Aggregate documents for Pinecone"
+    }
+  ],
+  "pinData": {
+    "When clicking ‘Execute workflow’": [
+      {
+        "json": {
+          "message": "What is the return window for an unused item?",
+          "intent": "knowledge_query",
+          "target_agent": "knowledge_agent",
+          "session_id": "TEST-SESSION-KNOW-01",
+          "correlation_id": "TEST-CORR-KNOW-01",
+          "execution_id": "TEST-EXEC-KNOW-01",
+          "telegram_chat_id": "123456789",
+          "telegram_user_id": "987654321",
+          "telegram_update_id": "700101",
+          "request_valid": true
+        }
+      }
+    ],
+    "Generate Policy Folder Prefixes": [
+      {
+        "json": {
+          "folderName": "returns",
+          "folderKey": "policies/"
+        }
+      }
+    ]
+  },
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Generate Policy Folder Prefixes",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Generate Policy Folder Prefixes": {
+      "main": [
+        [
+          {
+            "node": "Get many files",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get many files": {
+      "main": [
+        [
+          {
+            "node": "Download a file",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 1
+          }
+        ]
+      ]
+    },
+    "Download a file": {
+      "main": [
+        [
+          {
+            "node": "Extract from File",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Extract from File": {
+      "main": [
+        [
+          {
+            "node": "Merge",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Merge": {
+      "main": [
+        [
+          {
+            "node": "Prepare Documents and Generate Chunks",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Documents and Generate Chunks": {
+      "main": [
+        [
+          {
+            "node": "Aggregate documents for Pinecone",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aggregate documents for Pinecone": {
+      "main": [
+        [
+          {
+            "node": "Pinecone - Upsert Knowledge Documents",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "2119c66a-b704-4c33-911d-2cb20d6c743a",
+  "meta": {
+    "instanceId": "67aca5dd005ea05fc25170bb0135a918c0d69f09c7fa931c0e334272abfc3c3c"
+  },
+  "nodeGroups": [],
+  "id": "q9CthXGm2TQ24u1R",
+  "tags": []
+}

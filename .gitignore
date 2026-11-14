@@ -1,0 +1,42 @@
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# Credentials and private keys
+credentials.json
+secrets/
+*.pem
+*.key
+*.p12
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+
+# Local backups
+backups/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# Node dependencies
+node_modules/
+
+# IDE and operating system
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Local databases
+*.db
+*.sqlite
+*.sqlite3
+
+# Execution data
+execution-data/

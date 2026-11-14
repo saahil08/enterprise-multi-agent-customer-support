@@ -1,0 +1,135 @@
+{
+  "name": "WF_Observability_Log",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "023e10ed-b8cc-4c68-946f-d35aa9bf67bb",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const input = $json ?? {};\nconst executionId = String(input.execution_id ?? $execution.id ?? 'unknown');\nconst correlationId = String(input.correlation_id ?? `REQ-${executionId}`);\nconst eventName = String(input.event_name ?? 'workflow_event');\nconst loggedAt = String(input.logged_at ?? input.request_timestamp ?? new Date().toISOString());\nconst eventId = `${loggedAt}#${executionId}#${eventName}`;\nconst startedAt = Date.parse(String(input.request_timestamp ?? ''));\nconst durationMs = Number.isFinite(startedAt) ? Math.max(0, Date.now() - startedAt) : Number(input.duration_ms ?? 0);\nreturn {json:{\n  ...input, correlation_id:correlationId, execution_id:executionId,\n  event_name:eventName, logged_at:loggedAt, event_id:eventId,\n  workflow_name:String(input.workflow_name ?? 'unknown'),\n  status:String(input.status ?? input.log_status ?? 'RECORDED'),\n  duration_ms:durationMs\n}};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "bcb1c783-a76d-4c1c-8993-d39fa2d44e83",
+      "name": "Code - Build Structured Log Event"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dynamodb.ap-southeast-2.amazonaws.com/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "aws",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-amz-json-1.0"
+            },
+            {
+              "name": "X-Amz-Target",
+              "value": "DynamoDB_20120810.PutItem"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { TableName: 'support-agent-observability-dev', Item: { correlation_id: { S: $json.correlation_id }, event_id: { S: $json.event_id }, execution_id: { S: $json.execution_id }, workflow_name: { S: $json.workflow_name }, event_name: { S: $json.event_name }, status: { S: $json.status }, intent: { S: String($json.intent ?? 'unknown') }, target_agent: { S: String($json.target_agent ?? 'unknown') }, logged_at: { S: $json.logged_at }, duration_ms: { N: String(Number($json.duration_ms ?? 0)) } } } }}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "1e467d6e-f9b0-48a5-bc73-7448cee49972",
+      "name": "DynamoDB - Persist Observability Event",
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const original = $('When Executed by Another Workflow').first().json;\nconst built = $('Code - Build Structured Log Event').first().json;\nreturn [{json:{...original,observability_event_id:built.event_id,observability_persisted:true}}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        672,
+        0
+      ],
+      "id": "adc3d775-f5c2-44d8-a945-1a1ae19513df",
+      "name": "Code - Return Original Event"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Structured Log Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Structured Log Event": {
+      "main": [
+        [
+          {
+            "node": "DynamoDB - Persist Observability Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DynamoDB - Persist Observability Event": {
+      "main": [
+        [
+          {
+            "node": "Code - Return Original Event",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "27f8896e-c16e-4cc9-a295-3f0a3cae8644",
+  "meta": {
+    "instanceId": "67aca5dd005ea05fc25170bb0135a918c0d69f09c7fa931c0e334272abfc3c3c"
+  },
+  "nodeGroups": [],
+  "id": "SgQvjUDfvmgdGqMu",
+  "tags": []
+}

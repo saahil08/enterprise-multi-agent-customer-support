@@ -1,0 +1,872 @@
+{
+  "name": "WF_Slack_Interactive_Approval_HITL",
+  "nodes": [
+    {
+      "parameters": {},
+      "id": "808bca29-ba1f-4b32-9099-a2a583cdfdf3",
+      "name": "Manual Trigger - Send Test Card",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        1696,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const now = new Date().toISOString();\nconst suffix = Math.random().toString(36).slice(2, 7).toUpperCase();\nconst requestId = `APR-BUTTON-TEST-${Date.now()}-${suffix}`;\n\nconst testRecord = {\n  request_id: requestId,\n  customer_id: 'CUST-TEST-1001',\n  telegram_chat_id: `TEST-CHAT-${suffix}`,\n  session_id: `TEST-SESSION-${suffix}`,\n  request_type: 'refund_exception',\n  reason: 'Customer requested a refund exception outside the standard policy window.',\n  ai_recommendation: 'Escalate to a human reviewer.',\n  status: 'PENDING',\n  created_at: now,\n  reviewer_id: '',\n  reviewer_name: '',\n  decision: '',\n  decision_comment: '',\n  decided_at: '',\n  test_record: 'true'\n};\n\nconst blocks = [\n  {\n    type: 'header',\n    text: { type: 'plain_text', text: 'HUMAN APPROVAL — END-TO-END TEST', emoji: true }\n  },\n  {\n    type: 'section',\n    text: {\n      type: 'mrkdwn',\n      text:\n        `*Request ID:* ${requestId}\\n` +\n        `*Customer:* ${testRecord.customer_id}\\n` +\n        `*Request type:* ${testRecord.request_type}\\n` +\n        `*Reason:* ${testRecord.reason}\\n` +\n        `*AI recommendation:* ${testRecord.ai_recommendation}\\n` +\n        `*Status:* PENDING`\n    }\n  },\n  {\n    type: 'actions',\n    block_id: `approval_test_${suffix}`,\n    elements: [\n      {\n        type: 'button',\n        text: { type: 'plain_text', text: 'Approve (TEST)', emoji: true },\n        style: 'primary',\n        action_id: 'approval_approve_test',\n        value: requestId,\n        confirm: {\n          title: { type: 'plain_text', text: 'Confirm test approval?' },\n          text: { type: 'mrkdwn', text: 'This updates the test record in the development DynamoDB table only. No customer action will be performed.' },\n          confirm: { type: 'plain_text', text: 'Approve test' },\n          deny: { type: 'plain_text', text: 'Cancel' }\n        }\n      },\n      {\n        type: 'button',\n        text: { type: 'plain_text', text: 'Reject (TEST)', emoji: true },\n        style: 'danger',\n        action_id: 'approval_reject_test',\n        value: requestId,\n        confirm: {\n          title: { type: 'plain_text', text: 'Confirm test rejection?' },\n          text: { type: 'mrkdwn', text: 'This updates the test record in the development DynamoDB table only. No customer action will be performed.' },\n          confirm: { type: 'plain_text', text: 'Reject test' },\n          deny: { type: 'plain_text', text: 'Cancel' }\n        }\n      }\n    ]\n  },\n  {\n    type: 'context',\n    elements: [\n      { type: 'mrkdwn', text: `Test record created at ${now}. This is an end-to-end development test.` }\n    ]\n  }\n];\n\nreturn [{\n  json: {\n    request_id: requestId,\n    fallback_text: `HITL end-to-end test for ${requestId}.`,\n    blocks,\n    test_record: testRecord\n  }\n}];"
+      },
+      "id": "767ca7c8-988c-4481-8b06-fca2cbb44d96",
+      "name": "Code - Build Interactive Test Card",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        96
+      ]
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "support-approvals"
+        },
+        "messageType": "block",
+        "blocksUi": "={{ { text: $('Code - Build Interactive Test Card').item.json.fallback_text, blocks: $('Code - Build Interactive Test Card').item.json.blocks } }}",
+        "text": "={{ $('Code - Build Interactive Test Card').item.json.fallback_text }}",
+        "otherOptions": {}
+      },
+      "id": "d462edd8-d8c7-4072-a5b6-4261eb36fbb3",
+      "name": "Slack - Post Interactive Test Card",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        2368,
+        96
+      ],
+      "webhookId": "6a32efd6-dcda-4d63-a1ae-8f95361cd6e5",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "xUIFybiSwdQ1S8qV",
+          "name": "Slack_HITL_Dev"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "slack-approval-interaction-hitl-secure",
+        "options": {
+          "rawBody": true
+        }
+      },
+      "id": "7257d723-0dbb-4b9e-a7be-27f0bed92e61",
+      "name": "Webhook - Slack Interaction",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        1696,
+        496
+      ],
+      "webhookId": "37bccb26-3e79-46da-a7ad-800206c1f2a9",
+      "executeOnce": true
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst items = $input.all();\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst rawBody = buffer.toString('utf8');\n\nreturn items.map(item => ({\n  json: {\n    ...item.json,\n    rawBodyDiagnostic: {\n      available: true,\n      length: buffer.length,\n      startsWithPayload: rawBody.startsWith('payload='),\n      containsPayload: rawBody.includes('payload=')\n    }\n  },\n  binary: item.binary\n}));\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1920,
+        496
+      ],
+      "id": "fc8cfee7-63b3-4243-bd14-c31e92116667",
+      "name": "Code - Inspect Raw Slack Body"
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst item = $input.first();\n\nconst buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\nconst rawBody = buffer.toString('utf8');\n\nconst headers = item.json.headers || {};\nconst timestamp = headers['x-slack-request-timestamp'];\nconst receivedSignature = headers['x-slack-signature'];\n\nif (!timestamp || !receivedSignature) {\n  throw new Error('Missing Slack signature headers');\n}\n\nconst requestTime = Number(timestamp);\nconst currentTime = Math.floor(Date.now() / 1000);\nconst ageSeconds = currentTime - requestTime;\n\nconst timestampFresh = ageSeconds >= -60 && ageSeconds <= 300;\n\nif (!timestampFresh) {\n  throw new Error('Slack request timestamp is expired or invalid');\n}\n\nconst signatureBase = `v0:${timestamp}:${rawBody}`;\n\nreturn [{\n  json: {\n    signatureBase,\n    receivedSignature,\n    timestampFresh,\n    ageSeconds,\n    rawBodyLength: buffer.length\n  },\n  binary: item.binary\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2144,
+        496
+      ],
+      "id": "c25f9b10-449b-4f8d-9262-9c7eb57f1506",
+      "name": "Code - Prepare Slack Signature Input"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nconst expected = 'v0=' + String(item.calculatedSignature || '');\nconst received = String(item.receivedSignature || '');\n\nfunction safeEqual(a, b) {\n  if (a.length !== b.length) return false;\n  let difference = 0;\n  for (let i = 0; i < a.length; i++) {\n    difference |= a.charCodeAt(i) ^ b.charCodeAt(i);\n  }\n  return difference === 0;\n}\n\nconst signatureMatches =\n  expected !== 'v0=' &&\n  received.length > 0 &&\n  safeEqual(expected, received);\n\nconst timestampFresh = item.timestampFresh === true;\nconst authorized = signatureMatches && timestampFresh;\n\nreturn [{\n  json: {\n    authorized,\n    signatureVerified: signatureMatches,\n    timestampFresh,\n    ageSeconds: item.ageSeconds,\n    reason: authorized\n      ? 'SIGNATURE_VERIFIED'\n      : (!timestampFresh ? 'STALE_OR_INVALID_TIMESTAMP' : 'INVALID_SLACK_SIGNATURE')\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2592,
+        496
+      ],
+      "id": "8ecf779e-197f-4be9-b92a-37e839c7a923",
+      "name": "Code - Verify Slack Signature"
+    },
+    {
+      "parameters": {
+        "action": "hmac",
+        "value": "={{ $json.signatureBase }}",
+        "dataPropertyName": "calculatedSignature"
+      },
+      "type": "n8n-nodes-base.crypto",
+      "typeVersion": 2,
+      "position": [
+        2368,
+        496
+      ],
+      "id": "d07b99e8-8e15-4846-aa01-b5fdd2f62222",
+      "name": "Crypto: Calculate Slack HMAC",
+      "credentials": {
+        "crypto": {
+          "id": "pfL6FjaGFV0WRsjV",
+          "name": "Slack_Signing_Secret_Dev"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "612e1e8d-e864-4a03-99aa-10a7efd93fff",
+              "leftValue": "={{ $json.authorized }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        2816,
+        496
+      ],
+      "id": "d355d935-ee69-4150-a8cc-bab60fbd5ff9",
+      "name": "If"
+    },
+    {
+      "parameters": {
+        "jsCode": "const webhook = $('Webhook - Slack Interaction').first();\nconst webhookJson = webhook.json ?? {};\nlet payloadText =\n  webhookJson.body?.payload ??\n  webhookJson.payload ??\n  webhookJson.body?.['payload'];\n\nlet payload = null;\n\n// Slack sends application/x-www-form-urlencoded with a \"payload\" field.\n// Depending on n8n webhook parsing, it may already be decoded in body.payload.\nif (typeof payloadText === 'string' && payloadText.trim()) {\n  try {\n    payload = JSON.parse(payloadText);\n  } catch (error) {\n    throw new Error(`Slack payload field is not valid JSON: ${error.message}`);\n  }\n}\n\n// Fallback: parse the original raw request body when the form field was not\n// exposed as webhookJson.body.payload by the Webhook node.\nif (!payload) {\n  try {\n    const buffer = await this.helpers.getBinaryDataBuffer(0, 'data');\n    const rawBody = buffer.toString('utf8');\n    const marker = rawBody.match(/(?:^|&)payload=([^&]*)/);\n    if (marker?.[1]) {\n      payload = JSON.parse(decodeURIComponent(marker[1].replace(/\\\\+/g, ' ')));\n    }\n  } catch (error) {\n    // The primary parsed-body path above remains authoritative when available.\n  }\n}\n\nif (!payload || typeof payload !== 'object') {\n  throw new Error('Could not extract Slack interaction payload from the request body.');\n}\nif (payload.type !== 'block_actions') {\n  throw new Error(`Unsupported Slack interaction type: ${String(payload.type ?? 'missing')}`);\n}\nif (!payload.user?.id || !payload.channel?.id) {\n  throw new Error('Slack interaction is missing reviewer or channel identifiers.');\n}\nif (!Array.isArray(payload.actions) || payload.actions.length !== 1) {\n  throw new Error('Expected exactly one Slack button action.');\n}\n\nconst action = payload.actions[0];\nconst decisions = {\n  approval_approve_test: 'APPROVED',\n  approval_reject_test: 'REJECTED',\n  approve_support_request: 'APPROVED',\n  reject_support_request: 'REJECTED'\n};\nconst decision = decisions[action.action_id];\nif (!decision) throw new Error(`Unsupported approval action: ${String(action.action_id ?? 'missing')}`);\n\nconst requestId = String(action.value ?? '').trim();\nif (!requestId || requestId.length > 128) throw new Error('Invalid approval request ID.');\n\n// CONFIGURATION: replace this with the real Slack channel ID for #support-approvals.\n// Keep the stable channel-ID check; do not rely on channel name alone.\nconst APPROVAL_CHANNEL_ID = 'C0CGU4ALYBX';\nif (payload.channel.id !== APPROVAL_CHANNEL_ID) {\n  throw new Error(`Approval action received from an unauthorized channel (${payload.channel.id}).`);\n}\n\nreturn [{\n  json: {\n    request_id: requestId,\n    decision,\n    reviewer_id: String(payload.user.id),\n    reviewer_name: String(payload.user.username || payload.user.name || payload.user.real_name || 'Unknown'),\n    channel_id: String(payload.channel.id),\n    channel_name: String(payload.channel.name || ''),\n    action_id: String(action.action_id),\n    decided_at: new Date().toISOString()\n  }\n}];"
+      },
+      "id": "01b443c5-2bc8-470c-a479-895100e87728",
+      "name": "Code - Parse Approval Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3264,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\n// CONFIGURATION: replace with the Slack member IDs authorized to approve.\n// Use Slack member IDs (U...), never display names or email addresses.\nconst ALLOWED_REVIEWER_IDS = ['U0CGT5U9N59'];\nconst reviewerId = String(item.reviewer_id ?? '');\nconst allowed = ALLOWED_REVIEWER_IDS.includes(reviewerId);\n\nreturn [{\n  json: {\n    ...item,\n    reviewerAuthorized: allowed,\n    reason: allowed ? 'AUTHORIZED_REVIEWER' : 'REVIEWER_NOT_AUTHORIZED'\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3488,
+        400
+      ],
+      "id": "4c8e1932-5853-435c-9531-54e4c69c247b",
+      "name": "Code - Authorize Reviewer"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "bf3e4b0d-e479-4ce7-b53c-a8e41c8e0abb",
+              "leftValue": "={{ $json.reviewerAuthorized }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        3712,
+        400
+      ],
+      "id": "93877ca7-7548-4247-bf5d-118d91b98b00",
+      "name": "iF: Reviewer Authorized?"
+    },
+    {
+      "parameters": {
+        "jsCode": "const item = $input.first().json;\n\nif (item.reviewerAuthorized !== true) {\n  throw new Error('Reviewer authorization failed');\n}\n\nreturn [{\n  json: {\n    request_id: item.request_id,\n    decision: item.decision,\n    status: item.decision,\n    reviewer_id: item.reviewer_id,\n    reviewer_name: item.reviewer_name,\n    channel_id: item.channel_id,\n    action_id: item.action_id,\n    decided_at: item.decided_at,\n    approval_update_ready: true\n  }\n}];"
+      },
+      "id": "4bc6be8b-d22f-4a55-8e77-fb6396574bf8",
+      "name": "Code - Build Authorized Decision Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        3936,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dynamodb.ap-southeast-2.amazonaws.com/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "aws",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-amz-json-1.0"
+            },
+            {
+              "name": "X-Amz-Target",
+              "value": "DynamoDB_20120810.GetItem"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { TableName: 'support-agent-approvals-dev', Key: { request_id: { S: $('Code - Build Authorized Decision Record').first().json.request_id } }, ConsistentRead: true } }}",
+        "options": {}
+      },
+      "id": "c9bc4914-4592-4daa-b6de-e8cdea5fea0d",
+      "name": "DynamoDB - Get Approval Record",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4160,
+        400
+      ],
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst response = $input.first().json;\n\nconst decision = $('Code - Build Authorized Decision Record').first().json;\n\n// STEP 1: Extract the HTTP response.\nlet payload = response.data ?? response.body ?? response;\n\nif (typeof payload === 'string') {\n  try {\n    payload = JSON.parse(payload);\n  } catch (error) {\n    throw new Error(\n      `DynamoDB response is not valid JSON: ${error.message}`\n    );\n  }\n}\n\n// STEP 2: Extract the DynamoDB Item.\nconst item = payload.Item;\n\nif (!item) {\n  throw new Error(\n    `Approval record not found. DynamoDB response: ${JSON.stringify(payload)}`\n  );\n}\n\n// STEP 3: Decode DynamoDB AttributeValue objects.\nfunction decodeAttributeValue(value) {\n  if (value === null || typeof value !== 'object') {\n    return value;\n  }\n\n  if (Array.isArray(value)) {\n    return value.map(decodeAttributeValue);\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'S')) {\n    return value.S;\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'N')) {\n    return Number(value.N);\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'BOOL')) {\n    return value.BOOL;\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'NULL')) {\n    return null;\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'SS')) {\n    return value.SS;\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'NS')) {\n    return value.NS.map(Number);\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'L')) {\n    return value.L.map(decodeAttributeValue);\n  }\n\n  if (Object.prototype.hasOwnProperty.call(value, 'M')) {\n    return decodeItem(value.M);\n  }\n\n  return decodeItem(value);\n}\n\nfunction decodeItem(attributes) {\n  const result = {};\n\n  for (const [key, value] of Object.entries(attributes)) {\n    result[key] = decodeAttributeValue(value);\n  }\n\n  return result;\n}\n\n// STEP 4: Convert DynamoDB record to ordinary JSON.\nconst record = decodeItem(item);\n\n// STEP 5: Validate request ID.\nif (!record.request_id) {\n  throw new Error('DynamoDB record has no request_id');\n}\n\nif (String(record.request_id) !== String(decision.request_id)) {\n  throw new Error(\n    `Request ID mismatch. Database: ${record.request_id}, Decision: ${decision.request_id}`\n  );\n}\n\n// STEP 6: Validate current status.\nif (record.status !== 'PENDING') {\n  throw new Error(\n    `Approval already processed. Current status: ${record.status}`\n  );\n}\n\n// STEP 7: Validate requested decision.\nconst requestedDecision = String(decision.decision || '').toUpperCase();\n\nif (!['APPROVED', 'REJECTED'].includes(requestedDecision)) {\n  throw new Error('Invalid approval decision');\n}\n\n// STEP 8: Identify test versus production approval.\nconst isTestRecord =\n  record.test_record === true ||\n  String(record.test_record ?? '').toLowerCase() === 'true';\n\nconst resumeUrl = String(record.resume_url ?? '').trim();\n\n// Production approvals must have a resume URL.\n// Test records are allowed to use the existing test-only path.\nif (!isTestRecord && !resumeUrl) {\n  throw new Error(\n    'Production approval is missing resume_url. Cannot safely resume Supervisor execution.'\n  );\n}\n\n// STEP 9: Merge existing record with new decision.\nconst updated = {\n  ...record,\n\n  status: requestedDecision,\n  decision: requestedDecision,\n\n  reviewer_id: decision.reviewer_id,\n  reviewer_name: decision.reviewer_name,\n  decided_at: decision.decided_at,\n\n  decision_comment: record.decision_comment || '',\n\n  // HITL execution correlation.\n  resume_url: resumeUrl,\n  test_record: isTestRecord ? 'true' : 'false',\n  resume_required: !isTestRecord,\n  resume_ready: isTestRecord || Boolean(resumeUrl),\n\n  approval_update_ready: true,\n\n  // Debug information.\n  debug: {\n    source: 'DynamoDB HTTP GetItem',\n    record_found: true,\n    request_id_matched: true,\n    previous_status: record.status,\n    new_status: requestedDecision,\n    test_record: isTestRecord,\n    resume_url_available: Boolean(resumeUrl),\n    resume_required: !isTestRecord,\n    validation_passed: true\n  }\n};\n\n// STEP 10: Return the complete record.\nreturn [{ json: updated }];\n"
+      },
+      "id": "1642dd6a-9371-4bf5-bd86-8f1147ec5ede",
+      "name": "Code - Merge Existing Record and Decision",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        4384,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dynamodb.ap-southeast-2.amazonaws.com/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "aws",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-amz-json-1.0"
+            },
+            {
+              "name": "X-Amz-Target",
+              "value": "DynamoDB_20120810.UpdateItem"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { TableName: 'support-agent-approvals-dev', Key: { request_id: { S: $json.request_id } }, UpdateExpression: 'SET #st = :status, #decision = :decision, reviewer_id = :reviewer, reviewer_name = :reviewerName, decided_at = :decidedAt', ConditionExpression: '#st = :pending', ExpressionAttributeNames: { '#st': 'status', '#decision': 'decision' }, ExpressionAttributeValues: { ':status': { S: $json.status }, ':decision': { S: $json.decision }, ':reviewer': { S: $json.reviewer_id }, ':reviewerName': { S: $json.reviewer_name }, ':decidedAt': { S: $json.decided_at }, ':pending': { S: 'PENDING' } }, ReturnValues: 'ALL_NEW' } }}",
+        "options": {}
+      },
+      "id": "cca15a49-4fc6-4adf-9ec3-5115b52e8592",
+      "name": "DynamoDB - Conditionally Update Approval",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        4608,
+        400
+      ],
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "support-approvals"
+        },
+        "text": "={{ '*HUMAN APPROVAL DECISION RECORDED*\\n\\n' + '*Request ID:* `' + $('Code - Merge Existing Record and Decision').first().json.request_id + '`\\n' + '*Decision:* `' + $('Code - Merge Existing Record and Decision').first().json.status + '`\\n' + '*Reviewer:* ' + ($('Code - Merge Existing Record and Decision').first().json.reviewer_name || 'Unknown') + '\\n' + '*Reviewer ID:* `' + ($('Code - Merge Existing Record and Decision').first().json.reviewer_id || 'Unknown') + '`\\n' + '*Decided at:* ' + ($('Code - Merge Existing Record and Decision').first().json.decided_at || 'Unknown') }}",
+        "otherOptions": {}
+      },
+      "id": "b0091c94-f6ff-4c00-bbc5-0720956b4b84",
+      "name": "Slack - Confirm Recorded Decision",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        5280,
+        400
+      ],
+      "webhookId": "ca8c1dc4-48a1-4688-979c-e10bcc7ba841",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "xUIFybiSwdQ1S8qV",
+          "name": "Slack_HITL_Dev"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "9cb81453-a0f7-4fcb-8206-5bec86155282",
+              "leftValue": "={{ !!$('Code - Merge Existing Record and Decision').first().json.telegram_chat_id && !$('Code - Merge Existing Record and Decision').first().json.telegram_chat_id.toString().startsWith('TEST-') }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "bb0d8801-e8fd-43ac-9756-57dc2be95d62",
+      "name": "IF - Customer Telegram Chat Available",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        5952,
+        400
+      ]
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $('Code - Merge Existing Record and Decision').first().json.telegram_chat_id }}",
+        "text": "={{ 'Your support request ' + $('Code - Merge Existing Record and Decision').first().json.request_id + ' has been reviewed.\\n\\n' + 'Decision: ' + $('Code - Merge Existing Record and Decision').first().json.status + '\\n' + 'Reviewed by: ' + ($('Code - Merge Existing Record and Decision').first().json.reviewer_name || 'our support team') + '\\n\\n' + ($('Code - Merge Existing Record and Decision').first().json.status === 'APPROVED' ? 'Your request has been approved. Our team will follow the applicable next steps.' : 'Your request was not approved. Please contact support if you need further assistance.') }}",
+        "additionalFields": {}
+      },
+      "id": "b4b86115-c2ad-4cee-9870-d8ace1498ffa",
+      "name": "Telegram - Notify Customer of Decision",
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        6176,
+        400
+      ],
+      "webhookId": "acc3856d-c495-4d3c-90c7-fb4e7cfbda3e",
+      "credentials": {
+        "telegramApi": {
+          "id": "Q5uEok1FHC6IdA00",
+          "name": "Telegram_Support_Bot_Dev"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dynamodb.ap-southeast-2.amazonaws.com/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "aws",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-amz-json-1.0"
+            },
+            {
+              "name": "X-Amz-Target",
+              "value": "DynamoDB_20120810.PutItem"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { TableName: 'support-agent-approvals-dev', Item: { request_id: { S: $json.test_record.request_id }, customer_id: { S: $json.test_record.customer_id }, telegram_chat_id: { S: $json.test_record.telegram_chat_id }, session_id: { S: $json.test_record.session_id }, request_type: { S: $json.test_record.request_type }, reason: { S: $json.test_record.reason }, ai_recommendation: { S: $json.test_record.ai_recommendation }, status: { S: $json.test_record.status }, created_at: { S: $json.test_record.created_at }, reviewer_id: { S: '' }, reviewer_name: { S: '' }, decision: { S: '' }, decision_comment: { S: '' }, decided_at: { S: '' }, test_record: { S: 'true' } }, ConditionExpression: 'attribute_not_exists(request_id)' } }}",
+        "options": {}
+      },
+      "id": "ba99a373-7e89-4c35-8714-d06ea5c7bf39",
+      "name": "DynamoDB - Create Test Approval Record (HTTP PutItem)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2144,
+        96
+      ],
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "613418fe-4b27-4e7b-8fe2-17d0fc36bdb1",
+              "leftValue": "={{ \n  !!$('Code - Merge Existing Record and Decision').first().json.resume_url\n  &&\n  $('Code - Merge Existing Record and Decision').first().json.test_record !== 'true'\n}}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        4832,
+        400
+      ],
+      "id": "892ad20d-c339-4deb-bcf5-3083a2615586",
+      "name": "IF - Production Resume URL Available"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $('Code - Merge Existing Record and Decision').first().json.resume_url }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{\n  {\n    approval_request_id: $('Code - Merge Existing Record and Decision').first().json.request_id,\n    approval_decision: $('Code - Merge Existing Record and Decision').first().json.status,\n    decision: $('Code - Merge Existing Record and Decision').first().json.status,\n    reviewer_id: $('Code - Merge Existing Record and Decision').first().json.reviewer_id,\n    reviewer_name: $('Code - Merge Existing Record and Decision').first().json.reviewer_name,\n    decided_at: $('Code - Merge Existing Record and Decision').first().json.decided_at\n  }\n}}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.5,
+      "position": [
+        5056,
+        320
+      ],
+      "id": "8582f845-3d63-483d-ab08-cfa508426f45",
+      "name": "HTTP - Resume Supervisor Execution."
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst record = $('Code - Merge Existing Record and Decision').first().json;\nreturn [{json:{\n  correlation_id: record.correlation_id || `APR-${record.request_id}`,\n  execution_id: String($execution.id),\n  workflow_name: \"WF_Slack_Interactive_Approval_HTTP_DynamoDB_E2E\",\n  event_name: \"approval_decision_recorded\",\n  status: record.status,\n  intent: record.request_type || \"approval_required\",\n  target_agent: \"approval_required\",\n  logged_at: record.decided_at || new Date().toISOString()\n}}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        5504,
+        400
+      ],
+      "id": "de4ebe79-eb17-476b-90cb-38968e75a5e4",
+      "name": "Code - Build Approval Decision Log"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SgQvjUDfvmgdGqMu",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SgQvjUDfvmgdGqMu",
+          "cachedResultName": "WF_Observability_Log"
+        },
+        "workflowInputs": {
+          "mappingMode": "passthrough",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        5728,
+        400
+      ],
+      "id": "f0069fbe-f6b3-4686-8939-c7d653fe9b59",
+      "name": "Call WF_Observability_Log - Approval Decision",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, received: true } }}",
+        "options": {
+          "responseCode": 200
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3040,
+        400
+      ],
+      "id": "5daec588-0945-4d0a-afcc-1c23a69bdb5c",
+      "name": "Respond to Webhook - Accepted"
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: false, error: 'invalid_signature' } }}",
+        "options": {
+          "responseCode": 401
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [
+        3040,
+        592
+      ],
+      "id": "8a2d2348-b880-4353-a00c-bd161329024d",
+      "name": "Respond to Webhook - Invalid Signature"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Manual Trigger - Send Test Card": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Interactive Test Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Interactive Test Card": {
+      "main": [
+        [
+          {
+            "node": "DynamoDB - Create Test Approval Record (HTTP PutItem)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Inspect Raw Slack Body": {
+      "main": [
+        [
+          {
+            "node": "Code - Prepare Slack Signature Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Prepare Slack Signature Input": {
+      "main": [
+        [
+          {
+            "node": "Crypto: Calculate Slack HMAC",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Verify Slack Signature": {
+      "main": [
+        [
+          {
+            "node": "If",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Crypto: Calculate Slack HMAC": {
+      "main": [
+        [
+          {
+            "node": "Code - Verify Slack Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "If": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook - Accepted",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond to Webhook - Invalid Signature",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Parse Approval Decision": {
+      "main": [
+        [
+          {
+            "node": "Code - Authorize Reviewer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Authorize Reviewer": {
+      "main": [
+        [
+          {
+            "node": "iF: Reviewer Authorized?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "iF: Reviewer Authorized?": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Authorized Decision Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Authorized Decision Record": {
+      "main": [
+        [
+          {
+            "node": "DynamoDB - Get Approval Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DynamoDB - Get Approval Record": {
+      "main": [
+        [
+          {
+            "node": "Code - Merge Existing Record and Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Merge Existing Record and Decision": {
+      "main": [
+        [
+          {
+            "node": "DynamoDB - Conditionally Update Approval",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DynamoDB - Conditionally Update Approval": {
+      "main": [
+        [
+          {
+            "node": "IF - Production Resume URL Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Confirm Recorded Decision": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Approval Decision Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Customer Telegram Chat Available": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Notify Customer of Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DynamoDB - Create Test Approval Record (HTTP PutItem)": {
+      "main": [
+        [
+          {
+            "node": "Slack - Post Interactive Test Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Production Resume URL Available": {
+      "main": [
+        [
+          {
+            "node": "HTTP - Resume Supervisor Execution.",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Slack - Confirm Recorded Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Approval Decision Log": {
+      "main": [
+        [
+          {
+            "node": "Call WF_Observability_Log - Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call WF_Observability_Log - Approval Decision": {
+      "main": [
+        [
+          {
+            "node": "IF - Customer Telegram Chat Available",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Respond to Webhook - Accepted": {
+      "main": [
+        [
+          {
+            "node": "Code - Parse Approval Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "HTTP - Resume Supervisor Execution.": {
+      "main": [
+        [
+          {
+            "node": "Slack - Confirm Recorded Decision",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook - Slack Interaction": {
+      "main": [
+        [
+          {
+            "node": "Code - Inspect Raw Slack Body",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "23c51be9-4c29-41dc-aeb9-27ee73dc3c3b",
+  "meta": {
+    "instanceId": "67aca5dd005ea05fc25170bb0135a918c0d69f09c7fa931c0e334272abfc3c3c"
+  },
+  "nodeGroups": [],
+  "id": "SVdVoyypqnejpO1d",
+  "tags": []
+}

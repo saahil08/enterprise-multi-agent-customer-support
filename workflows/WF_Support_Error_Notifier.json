@@ -1,0 +1,90 @@
+{
+  "name": "WF_Support_Error_Notifier",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.errorTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "7f9b48c3-452e-4c86-8e9a-9cb0cfd18201",
+      "name": "Error Trigger - Capture Failure"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "const event = $json ?? {};\nconst workflowName = event.workflow?.name ?? \"Unknown workflow\";\nconst workflowId = event.workflow?.id ?? \"Unknown\";\nconst executionId = event.execution?.id ?? \"Unknown\";\nconst failedNode = event.execution?.lastNodeExecuted ?? \"Unknown\";\nconst rawError = String(event.execution?.error?.message ?? \"No error message available\");\nconst safeError = rawError\n  .replace(/(password|passwd|secret|api[_-]?key|access[_-]?token|authorization)\\s*[:=]\\s*[^\\s,;]+/gi, '$1=[REDACTED]')\n  .replace(/\\bBearer\\s+[A-Za-z0-9._~+\\/=-]{10,}/gi, 'Bearer [REDACTED]')\n  .slice(0, 900);\nconst executionUrl = event.execution?.url ?? \"Not available\";\nconst mode = event.execution?.mode ?? \"Unknown\";\nconst telegramText = [\n  \"🚨 SUPPORT AUTOMATION ERROR\",\n  \"\",\n  `Workflow: ${workflowName}`,\n  `Workflow ID: ${workflowId}`,\n  `Execution ID: ${executionId}`,\n  `Failed Node: ${failedNode}`,\n  `Execution Mode: ${mode}`,\n  \"\",\n  `Error: ${safeError}`,\n  \"\",\n  `Execution: ${executionUrl}`\n].join(\"\\n\");\nreturn {json:{\n  telegram_chat_id:\"1098071517\",\n  telegram_text:telegramText,\n  workflow_name:workflowName,\n  execution_id:executionId,\n  failed_node:failedNode,\n  error_message:safeError\n}};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ],
+      "id": "df0a17ec-c751-4c9c-8ee0-b82fa01713d6",
+      "name": "Code - Format Error Alert"
+    },
+    {
+      "parameters": {
+        "chatId": "={{ $json.telegram_chat_id }}",
+        "text": "={{ $json.telegram_text }}",
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
+      "position": [
+        448,
+        0
+      ],
+      "id": "a9eae644-cdc7-4064-8c40-3e4066a02fc5",
+      "name": "Telegram - Notify Administrator",
+      "webhookId": "ef70c591-599d-4768-85a2-2d23648d0217",
+      "credentials": {
+        "telegramApi": {
+          "id": "Q5uEok1FHC6IdA00",
+          "name": "Telegram_Support_Bot_Dev"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Error Trigger - Capture Failure": {
+      "main": [
+        [
+          {
+            "node": "Code - Format Error Alert",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Format Error Alert": {
+      "main": [
+        [
+          {
+            "node": "Telegram - Notify Administrator",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "5e2ec7a6-894e-4bc0-ba8d-c51d4ce0c82d",
+  "meta": {
+    "instanceId": "67aca5dd005ea05fc25170bb0135a918c0d69f09c7fa931c0e334272abfc3c3c"
+  },
+  "nodeGroups": [],
+  "id": "iS3OEhm8rIlLq5HC",
+  "tags": []
+}

@@ -1,0 +1,246 @@
+{
+  "name": "WF_Conversation_Memory",
+  "nodes": [
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst input = $(\"When Executed by Another Workflow\").first().json;\n\nconst message = input.message ?? input.content;\nconst role = input.role ?? \"user\";\n\nif (typeof message !== \"string\" || !message.trim()) {\n  throw new Error(\"Memory message is missing or empty.\");\n}\n\nif (![\"user\", \"assistant\"].includes(role)) {\n  throw new Error(\"Role must be user or assistant.\");\n}\n\nconst chatId = String(input.telegram_chat_id ?? \"\");\nconst userId = String(input.telegram_user_id ?? \"\");\nconst updateId = String(input.telegram_update_id ?? \"\");\n\nif (!chatId || !userId || !updateId) {\n  throw new Error(\"Telegram identifiers are missing.\");\n}\n\nconst createdAt = new Date().toISOString();\n\nreturn {\n  json: {\n    session_id: `telegram:${chatId}:${userId}`,\n    message_key: `${createdAt}#${updateId}#${role}`,\n    telegram_chat_id: chatId,\n    telegram_user_id: userId,\n    telegram_update_key: `${chatId}:${updateId}`,\n    role,\n    content: message.trim(),\n    created_at: createdAt\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        768,
+        0
+      ],
+      "id": "53826d21-3711-4f9c-b147-ff17d301eb77",
+      "name": "Code - Prepare Memory Record"
+    },
+    {
+      "parameters": {
+        "tableName": "support-agent-memory-dev",
+        "fieldsUi": {
+          "fieldValues": [
+            {
+              "fieldId": "session_id",
+              "fieldValue": "={{ $json.session_id }}"
+            },
+            {
+              "fieldId": "message_key",
+              "fieldValue": "={{ $json.message_key }}"
+            },
+            {
+              "fieldId": "telegram_chat_id",
+              "fieldValue": "={{ $json.telegram_chat_id }}"
+            },
+            {
+              "fieldId": "telegram_user_id",
+              "fieldValue": "={{ $json.telegram_user_id }}"
+            },
+            {
+              "fieldId": "telegram_update_key",
+              "fieldValue": "={{ $json.telegram_update_key }}"
+            },
+            {
+              "fieldId": "role",
+              "fieldValue": "={{ $json.role }}"
+            },
+            {
+              "fieldId": "content",
+              "fieldValue": "={{ $json.content }}"
+            },
+            {
+              "fieldId": "created_at",
+              "fieldValue": "={{ $json.created_at }}"
+            }
+          ]
+        },
+        "additionalFields": {}
+      },
+      "type": "n8n-nodes-base.awsDynamoDb",
+      "typeVersion": 1,
+      "position": [
+        944,
+        0
+      ],
+      "id": "4c6aaa39-0f9a-4f3e-b3a6-6ced02847fd6",
+      "name": "DynamoDB - Save Conversation Message",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst input = $(\"When Executed by Another Workflow\").first().json;\n\nconst chatId = String(input.telegram_chat_id ?? \"\");\nconst userId = String(input.telegram_user_id ?? \"\");\n\nif (!chatId || !userId) {\n  throw new Error(\"Telegram chat ID or user ID is missing.\");\n}\n\nreturn {\n  json: {\n    session_id: `telegram:${chatId}:${userId}`,\n    telegram_chat_id: chatId,\n    telegram_user_id: userId\n  }\n};\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "2b1de727-3b5c-4575-8a8d-f738fd8d1574",
+      "name": "Code - Prepare Memory Session"
+    },
+    {
+      "parameters": {
+        "operation": "getAll",
+        "tableName": "support-agent-memory-dev",
+        "keyConditionExpression": "session_id = :sessionId",
+        "eavUi": {
+          "eavValues": [
+            {
+              "attribute": ":sessionId",
+              "value": "={{ $json.session_id }}"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.awsDynamoDb",
+      "typeVersion": 1,
+      "position": [
+        400,
+        0
+      ],
+      "id": "68812d00-9a04-4187-90a3-2d76a8826327",
+      "name": "DynamoDB - Get Conversation History",
+      "alwaysOutputData": true,
+      "retryOnFail": true,
+      "maxTries": 2,
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst records = $input.all().map(item => item.json);\n\nconst sessionData = $(\"Code - Prepare Memory Session\").first().json;\nconst sessionId = sessionData.session_id;\n\nif (!sessionId) {\n  throw new Error(\"Conversation session ID is missing.\");\n}\n\nconst validRecords = records.filter(record =>\n  record.session_id === sessionId &&\n  [\"user\", \"assistant\"].includes(record.role) &&\n  typeof record.content === \"string\" &&\n  record.content.trim() !== \"\"\n);\n\nvalidRecords.sort((a, b) =>\n  String(a.message_key).localeCompare(String(b.message_key))\n);\n\nconst recentMessages = validRecords.slice(-20);\n\nconst conversationHistory = recentMessages.map(record => ({\n  role: record.role,\n  content: record.content\n}));\n\nconst historyText = conversationHistory\n  .map(record =>\n    `${record.role === \"user\" ? \"Customer\" : \"Assistant\"}: ${record.content}`\n  )\n  .join(\"\\n\\n\");\n\nreturn [{\n  json: {\n    session_id: sessionId,\n    telegram_chat_id: sessionData.telegram_chat_id,\n    telegram_user_id: sessionData.telegram_user_id,\n    conversation_history: conversationHistory,\n    history_text: historyText,\n    history_count: conversationHistory.length\n  }\n}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        592,
+        0
+      ],
+      "id": "663cd295-d89e-4220-a129-0d43b2deeeae",
+      "name": "Code - Format Conversation History"
+    },
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4a4c1915-6fbd-419f-9cd8-06dd4cc5e3b5",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "jsCode": "const history = $(\"Code - Format Conversation History\").first().json;\nconst current = $(\"Code - Prepare Memory Record\").first().json;\n\nif (!history?.session_id || !current?.content) {\n  throw new Error(\"Memory context or current message is missing.\");\n}\n\nreturn [{\n  json: {\n    session_id: history.session_id,\n    telegram_chat_id: history.telegram_chat_id,\n    telegram_user_id: history.telegram_user_id,\n    message: current.content,\n    conversation_history: history.conversation_history ?? [],\n    history_text: history.history_text ?? \"\",\n    history_count: history.history_count ?? 0,\n    current_message: current.content,\n    current_role: current.role\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        1104,
+        0
+      ],
+      "id": "fa3ad138-ca32-4c32-8ecb-d896fdf1c7d2",
+      "name": "Code - Return Memory Context"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Code - Prepare Memory Record": {
+      "main": [
+        [
+          {
+            "node": "DynamoDB - Save Conversation Message",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DynamoDB - Save Conversation Message": {
+      "main": [
+        [
+          {
+            "node": "Code - Return Memory Context",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Prepare Memory Session": {
+      "main": [
+        [
+          {
+            "node": "DynamoDB - Get Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DynamoDB - Get Conversation History": {
+      "main": [
+        [
+          {
+            "node": "Code - Format Conversation History",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code - Prepare Memory Session",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Format Conversation History": {
+      "main": [
+        [
+          {
+            "node": "Code - Prepare Memory Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "d31f2c4e-d2dc-4c75-a69b-14190403ef76",
+  "meta": {
+    "instanceId": "67aca5dd005ea05fc25170bb0135a918c0d69f09c7fa931c0e334272abfc3c3c"
+  },
+  "nodeGroups": [],
+  "id": "cyYQO0mUXTbEMyqW",
+  "tags": []
+}

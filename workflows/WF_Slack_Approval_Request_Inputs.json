@@ -1,0 +1,215 @@
+{
+  "name": "WF_Slack_Approval_Request_Inputs",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "id": "466c7a07-ba8a-4d2f-8a4c-c2a174ce1c98",
+      "name": "Execute Workflow Trigger - Supervisor",
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.1,
+      "position": [
+        0,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first()?.json ?? {};\nconst truthy = v => v === true || String(v).toLowerCase() === 'true';\nconst isTest = truthy(input.test_mode) || !input.approval_request_id;\nconst now = new Date().toISOString();\nconst suffix = Math.random().toString(36).slice(2, 7).toUpperCase();\nconst requestId = String(input.approval_request_id || (isTest ? `APR-TEST-${Date.now()}-${suffix}` : ''));\nconst approvalRequired = truthy(input.approval_required);\nconst requestType = String(input.approval_type || input.request_type || 'business_action');\nconst reason = String(input.approval_reason || input.reason || input.message || 'Human authorization required.');\nconst customerId = String(input.customer_id || 'UNKNOWN');\nconst correlationId = String(input.correlation_id || '');\nconst telegramChatId = String(input.telegram_chat_id || '');\nconst sessionId = String(input.session_id || input.telegram_update_id || '');\nconst resumeUrl = String(input.resume_url || '').trim();\nif (!requestId || requestId.length > 128) throw new Error('Invalid or missing approval_request_id');\nif (!isTest && !approvalRequired) throw new Error('Production request must have approval_required=true');\nif (!isTest && !resumeUrl) throw new Error('Missing resume_url; refusing to create an approval that cannot resume its originating execution');\n// Validate the n8n Cloud Wait-node resume URL.\nif (!isTest) {\n  const validResumeUrl =\n    /^https:\\/\\/[^/\\s]+\\/webhook-waiting\\/\\d+\\?signature=[a-fA-F0-9]+$/.test(\n      resumeUrl\n    );\n\n  if (!validResumeUrl) {\n    throw new Error(\n      `Invalid n8n resume URL format: ${resumeUrl}`\n    );\n  }\n}\nconst record = {\n  request_id: requestId, customer_id: customerId, telegram_chat_id: telegramChatId,\n  session_id: sessionId, request_type: requestType, reason, correlation_id: correlationId,\n  ai_recommendation: 'Await human decision; do not execute the requested action yet.',\n  status: 'PENDING', created_at: now, reviewer_id: '', reviewer_name: '',\n  decision: '', decision_comment: '', decided_at: '',\n  test_record: isTest ? 'true' : 'false', resume_url: resumeUrl\n};\nconst safe = v => String(v ?? '').replace(/[&<>]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));\nconst approveAction = isTest ? 'approval_approve_test' : 'approve_support_request';\nconst rejectAction = isTest ? 'approval_reject_test' : 'reject_support_request';\nconst blocks = [\n {type:'header',text:{type:'plain_text',text:isTest?'HUMAN APPROVAL — END-TO-END TEST':'HUMAN APPROVAL REQUIRED',emoji:true}},\n {type:'section',text:{type:'mrkdwn',text:`*Request ID:* ${safe(requestId)}\\n*Customer:* ${safe(customerId)}\\n*Request type:* ${safe(requestType)}\\n*Reason:* ${safe(reason)}\\n*Status:* PENDING`}},\n {type:'actions',block_id:`approval_${suffix}`,elements:[\n  {type:'button',text:{type:'plain_text',text:isTest?'Approve (TEST)':'Approve',emoji:true},style:'primary',action_id:approveAction,value:requestId,confirm:{title:{type:'plain_text',text:'Confirm approval?'},text:{type:'mrkdwn',text:isTest?'Development test only; no business action will run.':'Records authorization only; protected business action remains separately controlled.'},confirm:{type:'plain_text',text:'Approve'},deny:{type:'plain_text',text:'Cancel'}}},\n  {type:'button',text:{type:'plain_text',text:isTest?'Reject (TEST)':'Reject',emoji:true},style:'danger',action_id:rejectAction,value:requestId,confirm:{title:{type:'plain_text',text:'Confirm rejection?'},text:{type:'mrkdwn',text:'Rejection must prevent the protected action.'},confirm:{type:'plain_text',text:'Reject'},deny:{type:'plain_text',text:'Cancel'}}}\n ]},\n {type:'context',elements:[{type:'mrkdwn',text:isTest?'Development test approval.':'Decision will be recorded against the originating request.'}]}\n];\nreturn [{json:{request_id:requestId,fallback_text:`Approval ${requestId} requires a human decision.`,blocks,approval_record:record,is_test:isTest}}];"
+      },
+      "id": "254b75e8-ab3c-4fee-b2ed-f6aa8632be55",
+      "name": "Code - Build Approval Card and Record",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        0
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://dynamodb.ap-southeast-2.amazonaws.com/",
+        "authentication": "predefinedCredentialType",
+        "nodeCredentialType": "aws",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Content-Type",
+              "value": "application/x-amz-json-1.0"
+            },
+            {
+              "name": "X-Amz-Target",
+              "value": "DynamoDB_20120810.PutItem"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { TableName: 'support-agent-approvals-dev', Item: { request_id: { S: $json.approval_record.request_id }, customer_id: { S: $json.approval_record.customer_id }, telegram_chat_id: { S: $json.approval_record.telegram_chat_id }, session_id: { S: $json.approval_record.session_id }, request_type: { S: $json.approval_record.request_type }, correlation_id: { S: $json.approval_record.correlation_id || '' }, reason: { S: $json.approval_record.reason }, ai_recommendation: { S: $json.approval_record.ai_recommendation }, status: { S: $json.approval_record.status }, created_at: { S: $json.approval_record.created_at }, reviewer_id: { S: '' }, reviewer_name: { S: '' }, decision: { S: '' }, decision_comment: { S: '' }, decided_at: { S: '' }, test_record: { S: $json.approval_record.test_record }, resume_url: { S: $json.approval_record.resume_url } }, ConditionExpression: 'attribute_not_exists(request_id)' } }}",
+        "options": {}
+      },
+      "id": "31b0d580-09bd-4af4-aad4-870ca52c059a",
+      "name": "DynamoDB - Create Approval Record (HTTP PutItem)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        448,
+        0
+      ],
+      "credentials": {
+        "aws": {
+          "id": "qIcsD85cjQX8xiaP",
+          "name": "AWS (IAM) account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "authentication": "oAuth2",
+        "select": "channel",
+        "channelId": {
+          "__rl": true,
+          "mode": "name",
+          "value": "support-approvals"
+        },
+        "messageType": "block",
+        "blocksUi": "={{ { text: $('Code - Build Approval Card and Record').item.json.fallback_text, blocks: $('Code - Build Approval Card and Record').item.json.blocks } }}",
+        "text": "={{ $('Code - Build Approval Card and Record').item.json.fallback_text }}",
+        "otherOptions": {}
+      },
+      "id": "874bc93e-cd86-4352-901c-803696c2928a",
+      "name": "Slack - Post Interactive Approval Card",
+      "type": "n8n-nodes-base.slack",
+      "typeVersion": 2.2,
+      "position": [
+        672,
+        0
+      ],
+      "webhookId": "6a32efd6-dcda-4d63-a1ae-8f95361cd6e5",
+      "credentials": {
+        "slackOAuth2Api": {
+          "id": "xUIFybiSwdQ1S8qV",
+          "name": "Slack_HITL_Dev"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "\nconst built = $('Code - Build Approval Card and Record').first().json;\nconst record = built.approval_record ?? {};\nreturn [{json:{\n  correlation_id: record.correlation_id || `APR-${record.request_id}`,\n  execution_id: String($execution.id),\n  workflow_name: \"WF_Slack_Approval_Request_Subworkflow_Inputs_v2\",\n  event_name: \"approval_requested\",\n  status: \"PENDING\",\n  intent: \"approval_required\",\n  target_agent: \"approval_required\",\n  logged_at: new Date().toISOString()\n}}];\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        896,
+        0
+      ],
+      "id": "d2e0d4f6-0c69-470c-9145-fb3c96ddfaa4",
+      "name": "Code - Build Approval Request Log"
+    },
+    {
+      "parameters": {
+        "workflowId": {
+          "__rl": true,
+          "value": "SgQvjUDfvmgdGqMu",
+          "mode": "list",
+          "cachedResultUrl": "/workflow/SgQvjUDfvmgdGqMu",
+          "cachedResultName": "WF_Observability_Log"
+        },
+        "workflowInputs": {
+          "mappingMode": "passthrough",
+          "value": {},
+          "matchingColumns": [],
+          "schema": [],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {
+          "waitForSubWorkflow": true
+        }
+      },
+      "type": "n8n-nodes-base.executeWorkflow",
+      "typeVersion": 1.4,
+      "position": [
+        1120,
+        0
+      ],
+      "id": "37a8c3f5-0b2a-4b87-990d-17aa568e32a1",
+      "name": "Call WF_Observability_Log - Approval Requested",
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Execute Workflow Trigger - Supervisor": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Approval Card and Record",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Approval Card and Record": {
+      "main": [
+        [
+          {
+            "node": "DynamoDB - Create Approval Record (HTTP PutItem)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "DynamoDB - Create Approval Record (HTTP PutItem)": {
+      "main": [
+        [
+          {
+            "node": "Slack - Post Interactive Approval Card",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Slack - Post Interactive Approval Card": {
+      "main": [
+        [
+          {
+            "node": "Code - Build Approval Request Log",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Build Approval Request Log": {
+      "main": [
+        [
+          {
+            "node": "Call WF_Observability_Log - Approval Requested",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "561de4f4-78cd-4c67-aa37-7f62dd9cb7ef",
+  "meta": {
+    "instanceId": "67aca5dd005ea05fc25170bb0135a918c0d69f09c7fa931c0e334272abfc3c3c"
+  },
+  "nodeGroups": [],
+  "id": "kUsl0o0aSLi54t4D",
+  "tags": []
+}

@@ -1,0 +1,276 @@
+{
+  "name": "WF_AI_Guardrails",
+  "nodes": [
+    {
+      "parameters": {
+        "inputSource": "passthrough"
+      },
+      "type": "n8n-nodes-base.executeWorkflowTrigger",
+      "typeVersion": 1.3,
+      "position": [
+        0,
+        192
+      ],
+      "id": "138dcd96-e6f7-4efb-9f33-c816526f03f8",
+      "name": "When Executed by Another Workflow"
+    },
+    {
+      "parameters": {
+        "mode": "runOnceForEachItem",
+        "jsCode": "\nconst input = $json;\n\nconst mode = input.guardrail_mode === \"output\" ? \"output\" : \"input\";\n\nconst candidate =\n  mode === \"output\"\n    ? String(input.response ?? input.output ?? input.message ?? \"\").trim()\n    : input.message;\n\nconst result = {\n  ...input,\n  guardrail_mode: mode,\n  input_valid: false,\n  guardrail_status: \"BLOCKED\",\n  guardrail_decision: \"BLOCKED\",\n  rejection_reason: null,\n  secret_detected: false,\n  pii_detected: false,\n  requires_review: false,\n  guardrail_state: {\n    stage: mode,\n    checked: true,\n    passed: false,\n    blocked: false,\n    review_required: false\n  }\n};\n\n// --------------------------------------------------\n// 1. Validate input\n// --------------------------------------------------\n\nif (typeof candidate !== \"string\" || !candidate.trim()) {\n  result.rejection_reason =\n    mode === \"input\"\n      ? \"Message is missing or is not text.\"\n      : \"Generated response is empty.\";\n\n  result.message = null;\n  return { json: result };\n}\n\nconst text = candidate.trim();\n\n// --------------------------------------------------\n// 2. Character length validation\n// --------------------------------------------------\n\nif (text.length > (mode === \"input\" ? 4000 : 3500)) {\n  result.rejection_reason =\n    mode === \"input\"\n      ? \"Message exceeds the 4,000-character limit.\"\n      : \"Generated response exceeds the supported response length.\";\n\n  result.message = null;\n  return { json: result };\n}\n\n// --------------------------------------------------\n// 3. Unsupported control character detection\n// --------------------------------------------------\n\nif (/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]/.test(text)) {\n  result.rejection_reason =\n    \"Text contains unsupported control characters.\";\n\n  result.message = null;\n  return { json: result };\n}\n\n// --------------------------------------------------\n// 4. Secret and credential detection\n// --------------------------------------------------\n\nconst secretPatterns = [\n  /\\bAKIA[0-9A-Z]{16}\\b/i,\n  /\\bASIA[0-9A-Z]{16}\\b/i,\n  /-----BEGIN (?:RSA |EC |OPENSSH )?PRIVATE KEY-----/i,\n  /\\bBearer\\s+[A-Za-z0-9._~+\\/=-]{20,}/i,\n  /\\b(password|passwd|secret|api[_-]?key|access[_-]?token)\\s*[:=]\\s*\\S+/i\n];\n\nif (secretPatterns.some(pattern => pattern.test(text))) {\n  result.secret_detected = true;\n  result.rejection_reason =\n    \"Text appears to contain a credential or secret.\";\n\n  result.message = null;\n  result.guardrail_state.blocked = true;\n\n  return { json: result };\n}\n\n// --------------------------------------------------\n// 5. PII detection\n// --------------------------------------------------\n\n// Email addresses and long numeric sequences.\nconst piiPatterns = [\n  /\\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\\.[A-Z]{2,}\\b/i,\n  /\\b\\d{13,19}\\b/\n];\n\n// Remove standard date formats before checking\n// for phone-number patterns.\n//\n// Supported examples:\n// 2026-11-12\n// 2026/11/12\n// 12/11/2026\n\nconst textWithoutDates = text.replace(\n  /\\b(?:19|20)\\d{2}[-/.](?:0?[1-9]|1[0-2])[-/.](?:0?[1-9]|[12]\\d|3[01])\\b/g,\n  \" \"\n);\n\n// Detect phone-like sequences.\n// Require at least 10 digits to reduce false positives\n// from dates and short business identifiers.\n\nconst phoneCandidates =\n  textWithoutDates.match(/\\b\\+?\\d[\\d\\s().-]{7,}\\d\\b/g) || [];\n\nconst phoneDetected = phoneCandidates.some(candidate => {\n  const digitCount = (candidate.match(/\\d/g) || []).length;\n\n  return digitCount >= 10;\n});\n\nconst piiDetected =\n  piiPatterns.some(pattern => pattern.test(text)) ||\n  phoneDetected;\n\n// --------------------------------------------------\n// 6. Handle detected PII\n// --------------------------------------------------\n\nif (piiDetected) {\n  result.pii_detected = true;\n  result.input_valid = true;\n  result.requires_review = true;\n\n  result.guardrail_status = \"REVIEW_REQUIRED\";\n  result.guardrail_decision = \"REVIEW_REQUIRED\";\n\n  result.rejection_reason =\n    \"Text appears to contain personal information requiring review.\";\n\n  result.guardrail_state.review_required = true;\n  result.message = text;\n\n  return { json: result };\n}\n\n// --------------------------------------------------\n// 7. Prompt injection detection (input only)\n// --------------------------------------------------\n\nif (mode === \"input\") {\n  const injectionPatterns = [\n    /ignore\\s+(all\\s+)?(previous|prior|above)\\s+instructions/i,\n    /reveal\\s+(your\\s+)?(system\\s+prompt|hidden\\s+instructions)/i,\n    /act\\s+as\\s+(an?\\s+)?(unrestricted|unfiltered)\\s+(ai|assistant)/i,\n    /bypass\\s+(the\\s+)?(security|guardrails|restrictions)/i,\n    /developer\\s+message\\s*:/i\n  ];\n\n  if (injectionPatterns.some(pattern => pattern.test(text))) {\n    result.rejection_reason =\n      \"The message appears to contain instructions that attempt to override system safeguards.\";\n\n    result.message = null;\n    result.guardrail_state.blocked = true;\n\n    return { json: result };\n  }\n}\n\n// --------------------------------------------------\n// 8. Passed validation\n// --------------------------------------------------\n\nresult.message = text;\n\nif (mode === \"output\") {\n  result.response = text;\n\n  if (typeof input.output === \"string\") {\n    result.output = text;\n  }\n}\n\nresult.input_valid = true;\nresult.guardrail_status = \"PASSED\";\nresult.guardrail_decision = \"PASSED\";\nresult.guardrail_state.passed = true;\n\nreturn { json: result };\n"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        224,
+        192
+      ],
+      "id": "b9090e54-bdd2-4d28-8c7d-d8f4c929e71c",
+      "name": "Code - Validate Guardrails Input"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "96e1800e-b60d-459b-949f-e3864c7410db",
+              "leftValue": "={{ $json.input_valid }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        448,
+        192
+      ],
+      "id": "8ddee6d7-d869-4b84-a3db-e5ad8e193a4f",
+      "name": "IF - Input Valid?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "29c7a53b-95b6-4eb5-b98b-57b3eeaa9283",
+              "name": "response",
+              "value": "I couldn't process that message. Please send a valid text message without passwords, credentials or other sensitive information.",
+              "type": "string"
+            },
+            {
+              "id": "b299144d-ef51-474f-a1a6-887312fae8d8",
+              "name": "guardrail_decision",
+              "value": "BLOCKED",
+              "type": "string"
+            },
+            {
+              "id": "1f50185e-94b3-4b8e-a050-c4bd2e8e4c92",
+              "name": "guardrail_state",
+              "value": "={{ { stage: $json.guardrail_mode ?? 'input', checked: true, passed: false, blocked: true, review_required: false} }}",
+              "type": "object"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        672,
+        288
+      ],
+      "id": "ff1a4361-dc39-4ba4-9bf4-70b5beeff71b",
+      "name": "Set - Input Rejection Response."
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 4
+          },
+          "conditions": [
+            {
+              "id": "0d888c09-0356-47f4-b3a4-957e964bc8ee",
+              "leftValue": "={{ $json.requires_review }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.4,
+      "position": [
+        672,
+        96
+      ],
+      "id": "2182456d-1897-4c33-a4a9-71d406923fd2",
+      "name": "IF - PII Review Required?"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "a392a64d-3bec-4745-b0fb-ffccfa80eba7",
+              "name": "response",
+              "value": "For your privacy, please remove personal information such as email addresses, phone numbers or account details and send your question again.",
+              "type": "string"
+            },
+            {
+              "id": "a4483a6a-2643-4ce7-8352-66e75ace78ee",
+              "name": "guardrail_decision",
+              "value": "REVIEW_REQUIRED",
+              "type": "string"
+            },
+            {
+              "id": "e38a7de1-0813-4ec6-8d2d-39dc7df3938f",
+              "name": "guardrail_state",
+              "value": "={{ { stage: $json.guardrail_mode ?? 'input', checked: true, passed: false, blocked: false, review_required: true} }}",
+              "type": "object"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        896,
+        0
+      ],
+      "id": "37dfb6cc-510f-4e22-b4c5-49e81888c377",
+      "name": "Set - PII Review Response"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "b336654c-9b9c-4881-81fd-716420c7653e",
+              "name": "guardrail_decision",
+              "value": "PASSED",
+              "type": "string"
+            },
+            {
+              "id": "fc945713-ac08-4cd2-92b1-a1c9af7405b9",
+              "name": "guardrail_state",
+              "value": "={{ { stage: $json.guardrail_mode ?? 'input', checked: true, passed: true, blocked: false, review_required: false} }}",
+              "type": "object"
+            }
+          ]
+        },
+        "includeOtherFields": true,
+        "options": {}
+      },
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.5,
+      "position": [
+        896,
+        192
+      ],
+      "id": "b3b7364e-a949-4640-b0ad-1d23842e84ad",
+      "name": "Set - Guardrails Passed"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When Executed by Another Workflow": {
+      "main": [
+        [
+          {
+            "node": "Code - Validate Guardrails Input",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code - Validate Guardrails Input": {
+      "main": [
+        [
+          {
+            "node": "IF - Input Valid?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - Input Valid?": {
+      "main": [
+        [
+          {
+            "node": "IF - PII Review Required?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set - Input Rejection Response.",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "IF - PII Review Required?": {
+      "main": [
+        [
+          {
+            "node": "Set - PII Review Response",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Set - Guardrails Passed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": true,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate",
+    "availableInMCP": false
+  },
+  "versionId": "3b164dfa-9ea5-4fe1-8685-e1987f2a017c",
+  "meta": {
+    "instanceId": "67aca5dd005ea05fc25170bb0135a918c0d69f09c7fa931c0e334272abfc3c3c"
+  },
+  "nodeGroups": [],
+  "id": "o10hos9P7TN6QkC7",
+  "tags": []
+}
