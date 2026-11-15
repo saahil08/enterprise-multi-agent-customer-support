@@ -1,0 +1,150 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Enterprise Multi-Agent Support Architecture</title>
+<style>
+body {
+  font-family: Arial, sans-serif;
+  background: #f4f6fa;
+  color: #172033;
+  margin: 0;
+  padding: 24px;
+}
+h1 { text-align: center; }
+.subtitle { text-align: center; color: #64748b; }
+.container {
+  max-width: 1050px;
+  margin: auto;
+}
+.flow {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 12px;
+  margin: 28px 0;
+}
+.stage {
+  background: white;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 16px;
+  cursor: pointer;
+  text-align: left;
+  min-height: 90px;
+}
+.stage:hover, .stage.active {
+  border: 2px solid #2563eb;
+  background: #eff6ff;
+}
+.stage strong { display: block; margin-bottom: 8px; }
+.stage small { color: #64748b; }
+.details {
+  background: white;
+  border-radius: 12px;
+  border: 1px solid #cbd5e1;
+  padding: 22px;
+  min-height: 130px;
+}
+.details h2 { margin-top: 0; }
+.footer { color: #64748b; font-size: 13px; }
+</style>
+</head>
+<body>
+<div class="container">
+<h1>Enterprise Multi-Agent Support Automation</h1>
+<p class="subtitle">Interactive workflow architecture | n8n + Gemini + Pinecone + AWS</p>
+
+<div class="flow" id="flow"></div>
+
+<div class="details" aria-live="polite">
+  <h2 id="detailTitle">Select a workflow stage</h2>
+  <p id="detailSubtitle">Explore the architecture</p>
+  <p id="detailText">Click any stage above to understand its role.</p>
+</div>
+
+<p class="footer">
+Development architecture. Approval callback and production resume
+still require end-to-end verification.
+</p>
+</div>
+
+<script>
+const stages = [
+{
+ title:"1. Telegram Intake",
+ subtitle:"Supervisor workflow",
+ text:"Telegram receives the customer message. n8n normalizes the request, removes duplicate events and prepares the customer and session context."
+},
+{
+ title:"2. Input Guardrails",
+ subtitle:"WF_AI_Guardrails",
+ text:"Checks message validity, length, control characters, common credential patterns, selected prompt-injection patterns and PII patterns."
+},
+{
+ title:"3. Supervisor Agent",
+ subtitle:"Google Gemini",
+ text:"The supervisor classifies the customer's intent and prepares the target agent and routing information."
+},
+{
+ title:"4. Switch Routing",
+ subtitle:"n8n Switch node",
+ text:"Routes the request to Customer Support, Order Support, Knowledge Support, Human Support, clarification or approval-required branches."
+},
+{
+ title:"5. Customer Support",
+ subtitle:"Customer specialist",
+ text:"Validates customer information and performs a customer lookup in DynamoDB where required."
+},
+{
+ title:"6. Order Support",
+ subtitle:"Order specialist",
+ text:"Extracts the order ID from the current message or recent user conversation history, validates it and retrieves order information from DynamoDB."
+},
+{
+ title:"7. Knowledge Support",
+ subtitle:"Pinecone RAG",
+ text:"Searches the support-policies namespace using embedding-based semantic search. The current workflow requests up to four matching chunks."
+},
+{
+ title:"8. Human Approval",
+ subtitle:"Slack + DynamoDB",
+ text:"Creates an approval request, records PENDING state and sends a Slack interactive card. Complete real-button callback and resume testing remains outstanding."
+},
+{
+ title:"9. Memory & Observability",
+ subtitle:"DynamoDB",
+ text:"Conversation memory stores user and assistant messages. Observability records correlation IDs, execution IDs, workflow events, status and duration."
+},
+{
+ title:"10. Response & Errors",
+ subtitle:"Telegram",
+ text:"The customer receives the response through Telegram. The error notifier can format workflow failures and send administrator alerts."
+}
+];
+
+const flow = document.getElementById("flow");
+
+stages.forEach((stage, index) => {
+  const button = document.createElement("button");
+  button.className = "stage";
+  button.innerHTML =
+    `<strong>${stage.title}</strong><small>${stage.subtitle}</small>`;
+  button.addEventListener("click", () => selectStage(index, button));
+  flow.appendChild(button);
+});
+
+function selectStage(index, button) {
+  document.querySelectorAll(".stage").forEach(x => x.classList.remove("active"));
+  button.classList.add("active");
+
+  document.getElementById("detailTitle").textContent = stages[index].title;
+  document.getElementById("detailSubtitle").textContent = stages[index].subtitle;
+  document.getElementById("detailText").textContent = stages[index].text;
+}
+
+selectStage(0, flow.children[0]);
+</script>
+</body>
+</html>
