@@ -1,0 +1,21 @@
+# Configuration checklist before activation
+
+- [ ] Create DynamoDB table `support-agent-observability-dev` with partition key `correlation_id` (String) and sort key `event_id` (String).
+- [ ] Grant the n8n AWS identity `dynamodb:PutItem` on the observability table.
+- [ ] Verify existing DynamoDB tables and key schemas.
+- [ ] Verify S3 bucket `support-agent-knowledge-dev-saahil` and prefixes `policies/returns/`, `policies/refunds/`, `policies/shipping/`, `policies/warranty/`.
+- [ ] Verify Pinecone index, namespace `support-policies`, documents API and integrated embedding configuration for `chunk_text`.
+- [ ] Verify `AWS (IAM) account`.
+- [ ] Verify `Google Gemini(PaLM) Api account`.
+- [ ] Verify `Pinecone API - Support Dev`.
+- [ ] Verify `Telegram_Support_Bot_Dev`.
+- [ ] Verify `Slack_HITL_Dev`.
+- [ ] Verify `Slack_Signing_Secret_Dev`.
+- [ ] Confirm the Slack channel ID in `Code - Parse Approval Decision`.
+- [ ] Confirm allowed Slack reviewer IDs in `Code - Authorize Reviewer`.
+- [ ] Set Slack Interactivity Request URL to the callback workflow's production webhook URL.
+- [ ] Confirm the administrator Telegram chat ID in `WF_Support_Error_Notifier`.
+- [ ] Verify all Execute Workflow references after import, especially the new Customer Support and Observability workflows.
+- [ ] Run the integration test plan.
+- [ ] Activate Error Notifier and Slack callback.
+- [ ] Activate Supervisor last.
